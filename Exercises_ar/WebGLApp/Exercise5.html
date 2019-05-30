@@ -7,29 +7,21 @@
         <script type="text/javascript" src="webgl-utils.js"></script>
 
         <script id="shader-vs" type="x-shader/x-vertex">
-            attribute vec3 aVertexPosition;  
-            attribute vec2 aTextureCoordinates;
+            attribute vec3 aVertexPosition; 
         
             uniform mat4 uMVMatrix;
             uniform mat4 uPMatrix;
 
-            varying vec2 vTextureCoordinates;
-
             void main(void) {
                 gl_Position = uPMatrix * uMVMatrix * vec4(aVertexPosition, 1.0);
-                vTextureCoordinates = aTextureCoordinates;
             }
         </script>
         
         <script id="shader-fs" type="x-shader/x-fragment">
             precision mediump float;
 
-            uniform sampler2D uSampler;
-
-            varying vec2 vTextureCoordinates;
-
             void main(void) {
-                gl_FragColor = texture2D(uSampler, vec2(vTextureCoordinates.s, vTextureCoordinates.t));
+                gl_FragColor = vec4(0.0, 1.0, 0.0, 1.0);
             }
         </script>
         
@@ -108,8 +100,8 @@
 
                 //Vertex Texture Coordinates Attribute
 
-                shaderProgram.vertexTextureCoordinatesAttribute = gl.getAttribLocation(shaderProgram, "aTextureCoordinates");
-                gl.enableVertexAttribArray(shaderProgram.vertexTextureCoordinatesAttribute);
+                /* shaderProgram.vertexTextureCoordinatesAttribute = gl.getAttribLocation(shaderProgram, "aTextureCoordinates");
+                gl.enableVertexAttribArray(shaderProgram.vertexTextureCoordinatesAttribute); */
 
                 shaderProgram.pMatrixUniform = gl.getUniformLocation(shaderProgram, "uPMatrix");
                 shaderProgram.mvMatrixUniform = gl.getUniformLocation(shaderProgram, "uMVMatrix");
@@ -122,26 +114,6 @@
             function sendMatricesToShader() {
                 gl.uniformMatrix4fv(shaderProgram.pMatrixUniform, false, pMatrix);
                 gl.uniformMatrix4fv(shaderProgram.mvMatrixUniform, false, mvMatrix);
-            }
-
-            var myTexture;
-
-            function setTextureParams(texture) {
-                gl.bindTexture(gl.TEXTURE_2D, texture);
-                gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL,true);
-                gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, texture.image);
-                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-                gl.bindTexture(gl.TEXTURE_2D, null);
-            }
-
-            function loadTextureOnGPU(){
-                myTexture = gl.createTexture();
-                myTexture.image = new Image();
-                myTexture.image.onload = function(){
-                    setTextureParams(myTexture)
-                }
-                myTexture.image.src = "textures/marvel.png"
             }
             
             //Buffers
@@ -231,37 +203,14 @@
                 mat4.translate(viewMatrix,[panx, pany, -dist]);                
                 mat4.multiply(viewMatrix, mouseRotationMatrix);
                
-                //Triangles
-                
-                mat4.identity(mvMatrix);
-                mat4.multiply(mvMatrix,viewMatrix);
-                mat4.translate(mvMatrix, [-2.0, 0.0, 0.0]);
-
-                gl.bindBuffer(gl.ARRAY_BUFFER, triangleVertexPositionBuffer);
-                gl.vertexAttribPointer(shaderProgram.vertexPositionAttribute, triangleVertexPositionBuffer.itemSize, gl.FLOAT, false, 0, 0);
-                gl.bindBuffer(gl.ARRAY_BUFFER, triangleVertexTextureCoordinatesBuffer);
-                gl.vertexAttribPointer(shaderProgram.vertexTextureCoordinatesAttribute, triangleVertexTextureCoordinatesBuffer.itemSize, gl.FLOAT, false, 0, 0);
-                sendMatricesToShader();
-                gl.drawArrays(gl.TRIANGLES, 0, triangleVertexPositionBuffer.numItems);
-
-                //Quad
-
-                mat4.identity(mvMatrix);
-                mat4.multiply(mvMatrix,viewMatrix);
-                mat4.translate(mvMatrix, [2.0, 0.0, 0.0]);
-
-                gl.bindBuffer(gl.ARRAY_BUFFER, quadVertexPositionBuffer);
-                gl.vertexAttribPointer(shaderProgram.vertexPositionAttribute, quadVertexPositionBuffer.itemSize, gl.FLOAT, false, 0, 0);
-                gl.bindBuffer(gl.ARRAY_BUFFER,  quadVertexTextureCoordinatesBuffer);
-                gl.vertexAttribPointer(shaderProgram.vertexTextureCoordinatesAttribute,  quadVertexTextureCoordinatesBuffer.itemSize, gl.FLOAT, false, 0, 0);
-                sendMatricesToShader();
-                gl.drawArrays(gl.TRIANGLES, 0, quadVertexPositionBuffer.numItems);
-
-                //Texture
-                gl.activeTexture(gl.TEXTURE0);
-                gl.bindTexture(gl.TEXTURE_2D, myTexture);
-                gl.uniform1i(shaderProgram.usampler2D, 0);
-
+                if (modelVertexPositionBuffer){
+                    gl.bindBuffer(gl.ARRAY_BUFFER, modelVertexPositionBuffer);
+                    gl.vertexAttribPointer(shaderProgram.vertexPositionAttribute,
+                                            modelVertexPositionBuffer.itemSize, gl.FLOAT, false, 0, 0);
+                    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, modelVertexIndexBuffer);
+                    sendMatricesToShader();
+                    gl.drawElements(gl.TRIANGLES, modelVertexIndexBuffer.numItems, gl.UNSIGNED_SHORT, 0);
+                }
                 
                 mvPushMatrix();
                 sendMatricesToShader();
@@ -274,49 +223,48 @@
                 drawScene();
             }
 
-            function loadModel(filename, position, scale){
+            function loadModel(filename){
                 var request = new XMLHttpRequest();
                 request.open("GET", filename);
                 request.onreadystatechange = function (){
                     if(request.readyState == 4){
-                        handleLoadedModel(JSON.parse(request.responseText), position,  scale);
+                        handleLoadedModel(JSON.parse(request.responseText));
                     }
                 }
                 request.send();
             }
 
-            var models = [];
-            function handleLoadedModel(modelData, position, scale){
+            var modelVertexNormalBuffer;
+            var modelVertexPositionBuffer;
+            var modelVertexTextureCoordBuffer;
+            var modelVertexIndexBuffer;
+
+            function handleLoadedModel(modelData){
                 
-                model = {};
-                model.modelVertexNormalBuffer = gl.createBuffer();
-                gl.bindBuffer(gl.ARRAY_BUFFER, model.modelVertexNormalBuffer);
+                modelVertexNormalBuffer = gl.createBuffer();
+                gl.bindBuffer(gl.ARRAY_BUFFER, modelVertexNormalBuffer);
                 gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(modelData.vertexNormals), gl.STATIC_DRAW);
-                model.modelVertexNormalBuffer.itemSize = 3;
-                model.modelVertexNormalBuffer.numItems = modelData.vertexNormals.length / 3;
+                modelVertexNormalBuffer.itemSize = 3;
+                modelVertexNormalBuffer.numItems = modelData.vertexNormals.length / 3;
 
-                model.modelVertexTextureCoordBuffer = gl.createBuffer();
-                gl.bindBuffer(gl.ARRAY_BUFFER, model.modelVertexTextureCoordBuffer);
+                modelVertexTextureCoordBuffer = gl.createBuffer();
+                gl.bindBuffer(gl.ARRAY_BUFFER, modelVertexTextureCoordBuffer);
                 gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(modelData.vertexTextureCoords), gl.STATIC_DRAW);
-                model.modelVertexTextureCoordBuffer.itemSize = 3;
-                model.modelVertexTextureCoordBuffer.numItems = modelData.vertexTextureCoords.length / 2;
+                modelVertexTextureCoordBuffer.itemSize = 2;
+                modelVertexTextureCoordBuffer.numItems = modelData.vertexTextureCoords.length / 2;
 
-                model.modelVertexPositionBuffer = gl.createBuffer();
-                gl.bindBuffer(gl.ARRAY_BUFFER, model.modelVertexPositionBuffer);
+                modelVertexPositionBuffer = gl.createBuffer();
+                gl.bindBuffer(gl.ARRAY_BUFFER, modelVertexPositionBuffer);
                 gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(modelData.vertexPositions), gl.STATIC_DRAW);
-                model.modelVertexPositionBuffer.itemSize = 3;
-                model.modelVertexPositionBuffer.numItems = modelData.vertexPositions.length / 3;
+                modelVertexPositionBuffer.itemSize = 3;
+                modelVertexPositionBuffer.numItems = modelData.vertexPositions.length / 3;
 
-                model.modelVertexIndexBuffer = gl.createBuffer();
-                gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, model.modelVertexIndexBuffer);
+                modelVertexIndexBuffer = gl.createBuffer();
+                gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, modelVertexIndexBuffer);
                 gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(modelData.indices), gl.STATIC_DRAW);
-                model.modelVertexIndexBuffer.itemSize = 1;
-                model.modelVertexIndexBuffer.numItems = modelData.indices.length;
-                
-                model.mScale = scale;
-                model.mPos = position;
-
-                models.push(model);                
+                modelVertexIndexBuffer.itemSize = 1;
+                modelVertexIndexBuffer.numItems = modelData.indices.length;
+                               
             }
 
             //Dictionary to manage key events
@@ -490,8 +438,7 @@
 
                 initGL(canvas);
                 initShaders();
-                loadSceneOnGPU();
-                loadTextureOnGPU();
+                loadModel("models/Teapot.json");
 
                 gl.clearColor(0.0, 0.0, 0.0, 1.0);
                 gl.enable(gl.DEPTH_TEST);
